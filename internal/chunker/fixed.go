@@ -4,6 +4,7 @@ import (
 	"rag-pipeline/internal/models"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 var (
@@ -45,6 +46,10 @@ func (c *FixedSizeChunker) Chunk(text, source string) []models.Chunk {
 		if end > len(text) {
 			end = len(text)
 		} else {
+			// Выравниваем на границу UTF-8 руны, чтобы не разрезать многобайтовый символ
+			for end < len(text) && !utf8.RuneStart(text[end]) {
+				end++
+			}
 			// Не разрываем слова — сдвигаем границу до ближайшего пробела или переноса
 			for end < len(text) && text[end] != ' ' && text[end] != '\n' {
 				end++
@@ -74,6 +79,10 @@ func (c *FixedSizeChunker) Chunk(text, source string) []models.Chunk {
 		next := end - c.Overlap
 		if next <= pos {
 			next = pos + 1
+		}
+		// Выравниваем на начало UTF-8 руны, чтобы не разрезать многобайтовый символ
+		for next < len(text) && !utf8.RuneStart(text[next]) {
+			next++
 		}
 		pos = next
 	}

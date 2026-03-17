@@ -233,8 +233,9 @@ func runSearch(ctx context.Context, query string) error {
 		for i, r := range results {
 			// Обрезаем превью до 200 символов, чтобы не перегружать вывод
 			preview := r.Chunk.Text
-			if len(preview) > 200 {
-				preview = preview[:200] + "..."
+			runes := []rune(preview)
+			if len(runes) > 200 {
+				preview = string(runes[:200]) + "..."
 			}
 			fmt.Printf("[%d] Score: %.4f | Source: %s | Section: %s\n%s\n\n",
 				i+1, r.Score, r.Chunk.Metadata.Source, r.Chunk.Metadata.Section, preview)
