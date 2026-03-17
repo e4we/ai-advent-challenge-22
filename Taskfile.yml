@@ -1,0 +1,41 @@
+version: '3'
+
+vars:
+  BIN: bin/rag{{exeExt}}
+
+tasks:
+  build:
+    cmds:
+      - go build -o {{.BIN}} ./cmd/rag
+
+  index:
+    deps: [build]
+    cmds:
+      - '{{.BIN}} index'
+
+  search:
+    deps: [build]
+    cmds:
+      - '{{.BIN}} search "{{.CLI_ARGS}}"'
+
+  compare:
+    deps: [build]
+    cmds:
+      - '{{.BIN}} compare'
+
+  ask:
+    deps: [build]
+    cmds:
+      - '{{.BIN}} ask "{{.CLI_ARGS}}"'
+
+  test:
+    cmds:
+      - go test ./...
+
+  docker-up:
+    cmds:
+      - docker compose up -d
+
+  docker-down:
+    cmds:
+      - docker compose down -v

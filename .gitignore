@@ -1,0 +1,8 @@
+/.claude
+/.features
+/documents
+.env
+bin/
+
+*.exe 
+*.exe~
