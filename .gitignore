@@ -4,5 +4,6 @@
 .env
 bin/
 
-*.exe 
+eval_results.json
+*.exe
 *.exe~

@@ -59,10 +59,10 @@ func (qr *QueryRewriter) Rewrite(ctx context.Context, question string) ([]string
 	var queries []string
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		// Убираем нумерацию типа "1. ", "2. "
-		if len(line) > 3 && line[1] == '.' && line[2] == ' ' {
-			line = line[3:]
-		}
+		// Убираем нумерацию типа "1. ", "2. ", "10. "
+		line = strings.TrimLeft(line, "0123456789")
+		line = strings.TrimPrefix(line, ". ")
+		line = strings.TrimSpace(line)
 		if line != "" {
 			queries = append(queries, line)
 		}

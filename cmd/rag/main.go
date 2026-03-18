@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -94,6 +95,9 @@ func mergeResults(groups ...[]models.SearchResult) []models.SearchResult {
 	for _, r := range seen {
 		results = append(results, r)
 	}
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
 	return results
 }
 

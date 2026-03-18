@@ -41,7 +41,7 @@ func (r *Reranker) Rerank(query string, results []models.SearchResult) []models.
 	}
 
 	if len(filtered) == 0 {
-		return nil
+		return []models.SearchResult{}
 	}
 
 	// 2. Compute final scores: hybrid cosine + keyword overlap

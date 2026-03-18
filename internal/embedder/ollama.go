@@ -30,7 +30,7 @@ func NewOllamaEmbedder(baseURL, model string) *OllamaEmbedder {
 	return &OllamaEmbedder{
 		BaseURL: baseURL,
 		Model:   model,
-		Client:  &http.Client{Timeout: 60 * time.Second},
+		Client:  &http.Client{Timeout: embedHTTPTimeout},
 	}
 }
 
@@ -46,19 +46,27 @@ type embedResponse struct {
 	Embeddings [][]float32 `json:"embeddings"` // список векторов; берём первый элемент
 }
 
+// Параметры retry для Embed.
+const (
+	embedMaxRetries = 3                    // максимальное число попыток
+	embedHTTPTimeout = 60 * time.Second    // таймаут HTTP-клиента
+)
+
+// embedBackoffs — задержки между повторными попытками (экспоненциальный backoff).
+var embedBackoffs = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
+
 // Embed генерирует эмбеддинг для одного текста.
 // Реализует retry с экспоненциальным backoff (1s → 2s → 4s), всего 3 попытки.
 // Прерывается досрочно, если контекст отменён (например, Ctrl+C).
 func (e *OllamaEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
 	var lastErr error
-	backoffs := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
 
-	for attempt := 0; attempt <= 3; attempt++ {
+	for attempt := 0; attempt < embedMaxRetries; attempt++ {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case <-time.After(backoffs[attempt-1]):
+			case <-time.After(embedBackoffs[attempt-1]):
 			}
 		}
 
@@ -70,7 +78,7 @@ func (e *OllamaEmbedder) Embed(ctx context.Context, text string) ([]float32, err
 		slog.Warn("embed attempt failed", "attempt", attempt+1, "error", err)
 	}
 
-	return nil, fmt.Errorf("embed failed after 3 attempts: %w", lastErr)
+	return nil, fmt.Errorf("embed failed after %d attempts: %w", embedMaxRetries, lastErr)
 }
 
 // doEmbed выполняет один HTTP-запрос к Ollama без retry.
@@ -94,7 +102,10 @@ func (e *OllamaEmbedder) doEmbed(ctx context.Context, text string) ([]float32, e
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("ollama returned %d (body unreadable: %w)", resp.StatusCode, readErr)
+		}
 		return nil, fmt.Errorf("ollama returned %d: %s", resp.StatusCode, string(body))
 	}
 

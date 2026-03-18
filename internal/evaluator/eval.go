@@ -208,7 +208,8 @@ func (e *Evaluator) evaluateOne(ctx context.Context, q Question) QuestionResult 
 }
 
 // determineWinner определяет победителя по количеству фактов.
-// При равенстве приоритет: Reranked > RAG > Baseline.
+// При полном равенстве всех путей возвращает "Tie".
+// При частичном равенстве приоритет: Reranked > RAG > Baseline.
 func determineWinner(ragAnswer, baseAnswer, rerankedAnswer string, ragHits, baseHits, rerankedHits int, rerankerEnabled bool) string {
 	allEmpty := ragAnswer == "" && baseAnswer == ""
 	if rerankerEnabled {

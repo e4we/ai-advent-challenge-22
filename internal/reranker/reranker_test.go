@@ -99,8 +99,8 @@ func TestRerank_EmptyInput(t *testing.T) {
 	})
 
 	out := r.Rerank("query", nil)
-	if out != nil {
-		t.Errorf("expected nil for empty input, got %v", out)
+	if len(out) != 0 {
+		t.Errorf("expected empty slice for empty input, got %v", out)
 	}
 }
 
@@ -118,8 +118,8 @@ func TestRerank_AllBelowThreshold(t *testing.T) {
 	}
 
 	out := r.Rerank("query", results)
-	if out != nil {
-		t.Errorf("expected nil when all below threshold, got %d results", len(out))
+	if len(out) != 0 {
+		t.Errorf("expected empty slice when all below threshold, got %d results", len(out))
 	}
 }
 

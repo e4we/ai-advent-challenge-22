@@ -114,6 +114,22 @@ func (c *StructuralChunker) Chunk(text, source string) []models.Chunk {
 				if para == "" {
 					continue
 				}
+
+				// Если абзац всё ещё больше MaxChunkSize — дробим через FixedSizeChunker
+				if len(para) > c.MaxChunkSize {
+					subChunks := c.fallback.Chunk(para, source)
+					for _, sc := range subChunks {
+						sc.Metadata.Strategy = "structural"
+						sc.Metadata.Section = sec.name
+						sc.Metadata.Title = title
+						sc.Metadata.ChunkIndex = index
+						sc.Metadata.ChunkID = models.GenerateChunkID(source, "structural", index)
+						chunks = append(chunks, sc)
+						index++
+					}
+					continue
+				}
+
 				chunkID := models.GenerateChunkID(source, "structural", index)
 				chunks = append(chunks, models.Chunk{
 					Text: para,
