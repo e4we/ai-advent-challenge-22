@@ -42,6 +42,8 @@ task ask -- "Что такое архитектура трансформера?"
 | `task search` | Семантический поиск по обеим коллекциям | `task search -- "декораторы Python"` |
 | `task compare` | Сравнение fixed vs structural по набору тестовых запросов | `task compare` |
 | `task ask` | RAG-ответ на вопрос (structural коллекция + Claude) | `task ask -- "Как работает RLHF?"` |
+| `task eval` | Оценка RAG vs Baseline по 10 контрольным вопросам | `task eval` |
+| `task eval-quick` | Быстрая оценка (3 вопроса, для разработки) | `task eval-quick` |
 | `task test` | Запустить тесты | `task test` |
 | `task docker-up` | Запустить Qdrant в Docker | `task docker-up` |
 | `task docker-down` | Остановить Qdrant и удалить volume | `task docker-down` |
@@ -69,12 +71,13 @@ documents/ (.txt, .md)
 
 | Пакет | Роль |
 |---|---|
-| `cmd/rag` | Точка входа, CLI-команды (index / search / compare / ask) |
+| `cmd/rag` | Точка входа, CLI-команды (index / search / compare / ask / eval) |
 | `internal/loader` | Загрузка `.txt`/`.md` файлов из директории |
 | `internal/chunker` | Fixed-size и structural стратегии разбивки текста |
 | `internal/embedder` | HTTP-клиент Ollama с retry и батчевой обработкой |
 | `internal/indexer` | gRPC-клиент Qdrant: создание коллекций, upsert, поиск |
 | `internal/generator` | Claude API: генерация ответа по контексту из поиска |
+| `internal/evaluator` | Оценка RAG vs Baseline: контрольные вопросы, покрытие фактов, отчёт |
 | `internal/models` | Общие типы: `Document`, `Chunk`, `SearchResult` |
 
 ## Конфигурация
@@ -94,6 +97,8 @@ documents/ (.txt, .md)
 | `FIXED_CHUNK_OVERLAP` | `75` | Перекрытие fixed-чанков |
 | `STRUCT_MAX_CHUNK_SIZE` | `1500` | Максимальный размер structural-чанка |
 | `EMBED_CONCURRENCY` | `5` | Параллельных запросов к Ollama |
+| `EVAL_TOP_K` | `5` | Количество чанков для eval-поиска |
+| `EVAL_OUTPUT` | `eval_results.json` | Путь к JSON-отчёту eval |
 
 ## Разработка
 

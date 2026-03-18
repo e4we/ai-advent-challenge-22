@@ -15,13 +15,15 @@ task build    # то же через Taskfile
 task test
 task index    # запустить индексацию (требует Qdrant + Ollama)
 task ask -- "вопрос"
+task eval          # оценка RAG vs Baseline (10 вопросов)
+task eval-quick    # быстрая оценка (3 вопроса)
 ```
 
 Перед запуском убедиться, что переменные окружения из `.env` экспортированы.
 
 ## Архитектура
 
-**Точка входа**: `cmd/rag/main.go` — CLI с командами `index | search | compare | ask`.
+**Точка входа**: `cmd/rag/main.go` — CLI с командами `index | search | compare | ask | eval | eval-quick`.
 
 **Пакеты**:
 
@@ -31,12 +33,15 @@ task ask -- "вопрос"
 | `internal/chunker` | `FixedSizeChunker` (size/overlap) и `StructuralChunker` (по заголовкам Markdown) |
 | `internal/embedder` | HTTP-клиент Ollama; `Embed(text)` и `EmbedBatch(texts, concurrency)` |
 | `internal/indexer` | gRPC-клиент Qdrant: `CreateCollection`, `Upsert`, `Search` |
-| `internal/generator` | Claude API: `Generate(question, []SearchResult) → string` |
+| `internal/generator` | Claude API: `Generate(question, []SearchResult) → string`, `GenerateWithoutRAG(question) → string` |
+| `internal/evaluator` | Оценка RAG vs Baseline: прогон контрольных вопросов, подсчёт покрытия фактов, отчёт |
 | `internal/models` | Общие типы: `Document`, `Chunk`, `ChunkMetadata`, `SearchResult` |
 
 **Поток данных (index)**: `loader` → `chunker` × 2 → `embedder.EmbedBatch` → `indexer.Upsert` в две коллекции Qdrant.
 
 **Поток данных (ask)**: `embedder.Embed(question)` → `indexer.Search` (rag_structural, top-5) → `generator.Generate`.
+
+**Поток данных (eval)**: для каждого вопроса — RAG path (`Embed` → `Search` → `Generate`) и Baseline path (`GenerateWithoutRAG`) независимо → `CountFactHits` → сводка + JSON.
 
 ## Конвенции
 
