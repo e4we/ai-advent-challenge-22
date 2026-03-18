@@ -44,6 +44,8 @@ task ask -- "Что такое архитектура трансформера?"
 | `task ask` | RAG-ответ на вопрос (structural коллекция + Claude) | `task ask -- "Как работает RLHF?"` |
 | `task eval` | Оценка RAG vs Baseline по 10 контрольным вопросам | `task eval` |
 | `task eval-quick` | Быстрая оценка (3 вопроса, для разработки) | `task eval-quick` |
+| `task ask-reranked` | RAG-ответ с реранкингом (threshold + keyword overlap) | `task ask-reranked -- "Что такое RLHF?"` |
+| `task eval-reranked` | 3-mode оценка: RAG vs Reranked vs Baseline | `task eval-reranked` |
 | `task test` | Запустить тесты | `task test` |
 | `task docker-up` | Запустить Qdrant в Docker | `task docker-up` |
 | `task docker-down` | Остановить Qdrant и удалить volume | `task docker-down` |
@@ -64,6 +66,10 @@ documents/ (.txt, .md)
                                                               │
                                                          Qdrant (gRPC :6334)
                                                               │
+                                              [QueryRewriter → multi-query]
+                                                              │
+                                              [Reranker: threshold + keyword overlap]
+                                                              │
                                                     task ask: ClaudeGenerator
                                                               │
                                                           ответ + источники
@@ -77,7 +83,9 @@ documents/ (.txt, .md)
 | `internal/embedder` | HTTP-клиент Ollama с retry и батчевой обработкой |
 | `internal/indexer` | gRPC-клиент Qdrant: создание коллекций, upsert, поиск |
 | `internal/generator` | Claude API: генерация ответа по контексту из поиска |
-| `internal/evaluator` | Оценка RAG vs Baseline: контрольные вопросы, покрытие фактов, отчёт |
+| `internal/evaluator` | Оценка RAG vs Reranked vs Baseline: контрольные вопросы, покрытие фактов, 3-mode отчёт |
+| `internal/reranker` | Threshold-фильтр + keyword overlap scorer для переранжирования результатов |
+| `internal/rewriter` | Переписывание запросов через Claude API (query expansion) |
 | `internal/models` | Общие типы: `Document`, `Chunk`, `SearchResult` |
 
 ## Конфигурация
@@ -99,6 +107,12 @@ documents/ (.txt, .md)
 | `EMBED_CONCURRENCY` | `5` | Параллельных запросов к Ollama |
 | `EVAL_TOP_K` | `5` | Количество чанков для eval-поиска |
 | `EVAL_OUTPUT` | `eval_results.json` | Путь к JSON-отчёту eval |
+| `RERANKER_ENABLED` | `false` | Включить реранкинг результатов |
+| `RERANKER_FETCH_TOP_K` | `20` | Кандидатов из Qdrant для реранкера |
+| `RERANKER_RETURN_TOP_K` | `5` | Результатов после реранкинга |
+| `RERANKER_SCORE_THRESHOLD` | `0.3` | Мин. cosine similarity (отсечение) |
+| `RERANKER_KEYWORD_WEIGHT` | `0.3` | Вес keyword overlap (0 = чистый cosine) |
+| `QUERY_REWRITE_ENABLED` | `false` | Включить переписывание запросов через Claude |
 
 ## Разработка
 
