@@ -52,6 +52,13 @@ tasks:
     cmds:
       - '{{.BIN}} eval'
 
+  eval-quick-reranked:
+    deps: [build]
+    env:
+      RERANKER_ENABLED: "true"
+    cmds:
+      - '{{.BIN}} eval-quick'
+
   test:
     cmds:
       - go test ./...

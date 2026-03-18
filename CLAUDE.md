@@ -19,6 +19,7 @@ task eval              # оценка RAG vs Baseline (10 вопросов)
 task eval-quick        # быстрая оценка (3 вопроса)
 task ask-reranked -- "вопрос"  # ask с реранкером
 task eval-reranked     # eval с 3-mode (RAG vs Reranked vs Baseline)
+task eval-quick-reranked  # быстрая оценка с реранкером (3 вопроса)
 ```
 
 Перед запуском убедиться, что переменные окружения из `.env` экспортированы.
