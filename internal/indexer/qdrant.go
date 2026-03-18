@@ -32,6 +32,19 @@ func NewQdrantIndexer(host string, port int, collection string) (*QdrantIndexer,
 	}, nil
 }
 
+// EnsureCollectionExists проверяет, что коллекция существует в Qdrant.
+// Возвращает понятную ошибку с подсказкой, если коллекция не найдена.
+func (q *QdrantIndexer) EnsureCollectionExists(ctx context.Context) error {
+	exists, err := q.client.CollectionExists(ctx, q.CollectionName)
+	if err != nil {
+		return fmt.Errorf("checking collection %s: %w", q.CollectionName, err)
+	}
+	if !exists {
+		return fmt.Errorf("collection %q not found — run 'task index' to create and populate it", q.CollectionName)
+	}
+	return nil
+}
+
 // CreateCollection deletes if exists and creates a new collection with Cosine distance.
 func (q *QdrantIndexer) CreateCollection(ctx context.Context, vectorSize uint64) error {
 	exists, err := q.client.CollectionExists(ctx, q.CollectionName)

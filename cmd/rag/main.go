@@ -224,6 +224,10 @@ func runSearch(ctx context.Context, query string) error {
 		}
 		defer idx.Close()
 
+		if err := idx.EnsureCollectionExists(ctx); err != nil {
+			return err
+		}
+
 		results, err := idx.Search(ctx, queryEmbedding, 3)
 		if err != nil {
 			return fmt.Errorf("searching %s: %w", collName, err)
@@ -286,11 +290,19 @@ func runCompare(ctx context.Context) error {
 	}
 	defer fixedIdx.Close()
 
+	if err := fixedIdx.EnsureCollectionExists(ctx); err != nil {
+		return err
+	}
+
 	structIdx, err := indexer.NewQdrantIndexer(qdrantHost, qdrantPort, "rag_structural")
 	if err != nil {
 		return err
 	}
 	defer structIdx.Close()
+
+	if err := structIdx.EnsureCollectionExists(ctx); err != nil {
+		return err
+	}
 
 	fmt.Printf("%-50s | %-12s | %-12s | %s\n", "Query", "Fixed Score", "Struct Score", "Winner")
 	fmt.Println(strings.Repeat("-", 95))
@@ -365,6 +377,10 @@ func runAsk(ctx context.Context, question string) error {
 		return err
 	}
 	defer idx.Close()
+
+	if err := idx.EnsureCollectionExists(ctx); err != nil {
+		return err
+	}
 
 	// Получаем top-5 релевантных чанков — этого обычно достаточно для хорошего ответа
 	results, err := idx.Search(ctx, queryEmbedding, 5)
