@@ -28,6 +28,16 @@ tasks:
     cmds:
       - '{{.BIN}} ask "{{.CLI_ARGS}}"'
 
+  eval:
+    deps: [build]
+    cmds:
+      - '{{.BIN}} eval'
+
+  eval-quick:
+    deps: [build]
+    cmds:
+      - '{{.BIN}} eval-quick'
+
   test:
     cmds:
       - go test ./...

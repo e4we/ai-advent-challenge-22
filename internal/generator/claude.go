@@ -56,6 +56,42 @@ func (g *ClaudeGenerator) Generate(ctx context.Context, question string, context
 	return message.Content[0].AsText().Text, nil
 }
 
+// GenerateWithoutRAG отправляет вопрос в Claude без RAG-контекста (baseline-режим).
+// Используется для сравнения качества ответов с RAG и без.
+func (g *ClaudeGenerator) GenerateWithoutRAG(ctx context.Context, question string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+
+	prompt := buildBaselinePrompt(question)
+
+	message, err := g.client.Messages.New(ctx, anthropic.MessageNewParams{
+		Model:       g.model,
+		MaxTokens:   1024,
+		Temperature: anthropic.Float(0.3),
+		Messages: []anthropic.MessageParam{
+			anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("Claude API error: %w\nHint: check ANTHROPIC_API_KEY environment variable", err)
+	}
+
+	if len(message.Content) == 0 {
+		return "", fmt.Errorf("empty response from Claude")
+	}
+
+	return message.Content[0].AsText().Text, nil
+}
+
+// buildBaselinePrompt формирует промпт без RAG-контекста для baseline-сравнения.
+func buildBaselinePrompt(question string) string {
+	var sb strings.Builder
+	sb.WriteString("Ты — полезный ассистент. Ответь на вопрос, используя свои знания.\n")
+	sb.WriteString("Отвечай на русском языке. Будь точным и конкретным.\n\n")
+	fmt.Fprintf(&sb, "ВОПРОС: %s", question)
+	return sb.String()
+}
+
 // buildPrompt формирует промпт для Claude из вопроса и найденных чанков.
 // Структура промпта: системная инструкция → список чанков с источниками → вопрос.
 // Явно ограничиваем модель только предоставленным контекстом, чтобы избежать галлюцинаций.

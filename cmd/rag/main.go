@@ -15,6 +15,7 @@ import (
 
 	"rag-pipeline/internal/chunker"
 	"rag-pipeline/internal/embedder"
+	"rag-pipeline/internal/evaluator"
 	"rag-pipeline/internal/generator"
 	"rag-pipeline/internal/indexer"
 	"rag-pipeline/internal/loader"
@@ -46,7 +47,7 @@ func getEnvInt(key string, defaultVal int) int {
 // отменяется и все дочерние операции (HTTP, gRPC) завершаются корректно.
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: rag <index|search|compare|ask> [args...]\n")
+		fmt.Fprintf(os.Stderr, "Usage: rag <index|search|compare|ask|eval|eval-quick> [args...]\n")
 		os.Exit(1)
 	}
 
@@ -85,8 +86,18 @@ func main() {
 			slog.Error("ask failed", "error", err)
 			os.Exit(1)
 		}
+	case "eval":
+		if err := runEval(ctx, evaluator.DefaultQuestions()); err != nil && err != context.Canceled {
+			slog.Error("eval failed", "error", err)
+			os.Exit(1)
+		}
+	case "eval-quick":
+		if err := runEval(ctx, evaluator.QuickQuestions()); err != nil && err != context.Canceled {
+			slog.Error("eval-quick failed", "error", err)
+			os.Exit(1)
+		}
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\nUsage: rag <index|search|compare|ask>\n", cmd)
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\nUsage: rag <index|search|compare|ask|eval|eval-quick>\n", cmd)
 		os.Exit(1)
 	}
 }
@@ -356,6 +367,45 @@ func runCompare(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// runEval запускает оценку RAG-пайплайна на заданном наборе вопросов.
+func runEval(ctx context.Context, questions []evaluator.Question) error {
+	emb := newEmbedder()
+
+	qdrantHost := getEnv("QDRANT_HOST", "localhost")
+	qdrantPort := getEnvInt("QDRANT_PORT", 6334)
+
+	idx, err := indexer.NewQdrantIndexer(qdrantHost, qdrantPort, "rag_structural")
+	if err != nil {
+		return err
+	}
+	defer idx.Close()
+
+	if err := idx.EnsureCollectionExists(ctx); err != nil {
+		return err
+	}
+
+	claudeModel := getEnv("CLAUDE_MODEL", "claude-sonnet-4-20250514")
+	gen := generator.NewClaudeGenerator(claudeModel)
+
+	cfg := evaluator.Config{
+		TopK:           getEnvInt("EVAL_TOP_K", 5),
+		OutputPath:     getEnv("EVAL_OUTPUT", "eval_results.json"),
+		Model:          claudeModel,
+		EmbeddingModel: getEnv("EMBEDDING_MODEL", "nomic-embed-text"),
+		Collection:     "rag_structural",
+	}
+
+	ev := evaluator.NewEvaluator(emb, idx, gen, cfg)
+	report, err := ev.Run(ctx, questions)
+	if report != nil {
+		ev.PrintReport(report)
+		if saveErr := ev.SaveJSON(report); saveErr != nil {
+			slog.Warn("failed to save results", "error", saveErr)
+		}
+	}
+	return err
 }
 
 // runAsk реализует полный RAG-пайплайн для ответа на вопрос:
