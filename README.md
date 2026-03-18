@@ -84,7 +84,7 @@ documents/ (.txt, .md)
 | `internal/indexer` | gRPC-клиент Qdrant: создание коллекций, upsert, поиск |
 | `internal/generator` | Claude API: генерация ответа по контексту из поиска |
 | `internal/evaluator` | Оценка RAG vs Reranked vs Baseline: контрольные вопросы, покрытие фактов, 3-mode отчёт |
-| `internal/reranker` | Threshold-фильтр + keyword overlap scorer для переранжирования результатов |
+| `internal/reranker` | Threshold-фильтр + keyword overlap scorer для переранжирования результатов ([документация](docs/reranker.md)) |
 | `internal/rewriter` | Переписывание запросов через Claude API (query expansion) |
 | `internal/models` | Общие типы: `Document`, `Chunk`, `SearchResult` |
 
