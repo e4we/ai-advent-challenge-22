@@ -20,6 +20,8 @@ import (
 	"rag-pipeline/internal/indexer"
 	"rag-pipeline/internal/loader"
 	"rag-pipeline/internal/models"
+	"rag-pipeline/internal/reranker"
+	"rag-pipeline/internal/rewriter"
 )
 
 // getEnv возвращает значение переменной окружения key,
@@ -40,6 +42,59 @@ func getEnvInt(key string, defaultVal int) int {
 		}
 	}
 	return defaultVal
+}
+
+// getEnvBool возвращает bool-значение переменной окружения key.
+func getEnvBool(key string, defaultVal bool) bool {
+	if v := os.Getenv(key); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err == nil {
+			return b
+		}
+	}
+	return defaultVal
+}
+
+// getEnvFloat возвращает float64-значение переменной окружения key.
+func getEnvFloat(key string, defaultVal float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err == nil {
+			return f
+		}
+	}
+	return defaultVal
+}
+
+// newReranker создаёт реранкер из переменных окружения, если включён.
+func newReranker() *reranker.Reranker {
+	if !getEnvBool("RERANKER_ENABLED", false) {
+		return nil
+	}
+	return reranker.New(reranker.Config{
+		FetchTopK:      getEnvInt("RERANKER_FETCH_TOP_K", 20),
+		ReturnTopK:     getEnvInt("RERANKER_RETURN_TOP_K", 5),
+		ScoreThreshold: float32(getEnvFloat("RERANKER_SCORE_THRESHOLD", 0.3)),
+		KeywordWeight:  float32(getEnvFloat("RERANKER_KEYWORD_WEIGHT", 0.3)),
+	})
+}
+
+// mergeResults объединяет несколько групп результатов, дедуплицируя по ChunkID (берёт max score).
+func mergeResults(groups ...[]models.SearchResult) []models.SearchResult {
+	seen := make(map[string]models.SearchResult)
+	for _, group := range groups {
+		for _, r := range group {
+			id := r.Chunk.Metadata.ChunkID
+			if existing, ok := seen[id]; !ok || r.Score > existing.Score {
+				seen[id] = r
+			}
+		}
+	}
+	results := make([]models.SearchResult, 0, len(seen))
+	for _, r := range seen {
+		results = append(results, r)
+	}
+	return results
 }
 
 // main — точка входа: разбирает команду из аргументов и запускает нужную функцию.
@@ -228,6 +283,8 @@ func runSearch(ctx context.Context, query string) error {
 	qdrantHost := getEnv("QDRANT_HOST", "localhost")
 	qdrantPort := getEnvInt("QDRANT_PORT", 6334)
 
+	rr := newReranker()
+
 	for _, collName := range []string{"rag_fixed", "rag_structural"} {
 		idx, err := indexer.NewQdrantIndexer(qdrantHost, qdrantPort, collName)
 		if err != nil {
@@ -239,9 +296,18 @@ func runSearch(ctx context.Context, query string) error {
 			return err
 		}
 
-		results, err := idx.Search(ctx, queryEmbedding, 3)
+		searchTopK := 3
+		if rr != nil {
+			searchTopK = rr.FetchTopK()
+		}
+
+		results, err := idx.Search(ctx, queryEmbedding, searchTopK)
 		if err != nil {
 			return fmt.Errorf("searching %s: %w", collName, err)
+		}
+
+		if rr != nil {
+			results = rr.Rerank(query, results)
 		}
 
 		fmt.Printf("\n=== Results from %s ===\n", collName)
@@ -389,15 +455,26 @@ func runEval(ctx context.Context, questions []evaluator.Question) error {
 	claudeModel := getEnv("CLAUDE_MODEL", "claude-sonnet-4-20250514")
 	gen := generator.NewClaudeGenerator(claudeModel)
 
+	rr := newReranker()
+	rerankerEnabled := rr != nil
+
 	cfg := evaluator.Config{
-		TopK:           getEnvInt("EVAL_TOP_K", 5),
-		OutputPath:     getEnv("EVAL_OUTPUT", "eval_results.json"),
-		Model:          claudeModel,
-		EmbeddingModel: getEnv("EMBEDDING_MODEL", "nomic-embed-text"),
-		Collection:     "rag_structural",
+		TopK:            getEnvInt("EVAL_TOP_K", 5),
+		FetchTopK:       getEnvInt("RERANKER_FETCH_TOP_K", 20),
+		RerankerEnabled: rerankerEnabled,
+		OutputPath:      getEnv("EVAL_OUTPUT", "eval_results.json"),
+		Model:           claudeModel,
+		EmbeddingModel:  getEnv("EMBEDDING_MODEL", "nomic-embed-text"),
+		Collection:      "rag_structural",
 	}
 
-	ev := evaluator.NewEvaluator(emb, idx, gen, cfg)
+	// Передаём реранкер как интерфейс (nil если отключён)
+	var rri evaluator.Reranker
+	if rr != nil {
+		rri = rr
+	}
+
+	ev := evaluator.NewEvaluator(emb, idx, gen, rri, cfg)
 	report, err := ev.Run(ctx, questions)
 	if report != nil {
 		ev.PrintReport(report)
@@ -409,14 +486,23 @@ func runEval(ctx context.Context, questions []evaluator.Question) error {
 }
 
 // runAsk реализует полный RAG-пайплайн для ответа на вопрос:
-// embed(question) → search(rag_structural, top-5) → generate(Claude API).
+// [rewrite(q)] → embed(queries) → search → [rerank] → generate(Claude API).
 // Использует коллекцию rag_structural, так как структурные чанки лучше сохраняют контекст раздела.
 func runAsk(ctx context.Context, question string) error {
 	emb := newEmbedder()
+	claudeModel := getEnv("CLAUDE_MODEL", "claude-sonnet-4-20250514")
+	rr := newReranker()
 
-	queryEmbedding, err := emb.Embed(ctx, question)
-	if err != nil {
-		return fmt.Errorf("embedding question: %w", err)
+	// Query rewrite: получаем доп. варианты запроса
+	queries := []string{question}
+	if getEnvBool("QUERY_REWRITE_ENABLED", false) {
+		qr := rewriter.New(claudeModel)
+		rewritten, err := qr.Rewrite(ctx, question)
+		if err != nil {
+			slog.Warn("query rewrite failed", "error", err)
+		} else {
+			queries = append(queries, rewritten...)
+		}
 	}
 
 	qdrantHost := getEnv("QDRANT_HOST", "localhost")
@@ -432,13 +518,38 @@ func runAsk(ctx context.Context, question string) error {
 		return err
 	}
 
-	// Получаем top-5 релевантных чанков — этого обычно достаточно для хорошего ответа
-	results, err := idx.Search(ctx, queryEmbedding, 5)
-	if err != nil {
-		return fmt.Errorf("searching: %w", err)
+	// Определяем top-K для поиска
+	searchTopK := 5
+	if rr != nil {
+		searchTopK = rr.FetchTopK()
 	}
 
-	claudeModel := getEnv("CLAUDE_MODEL", "claude-sonnet-4-20250514")
+	// Embed + search для каждого варианта запроса, merge результатов
+	var allGroups [][]models.SearchResult
+	for _, q := range queries {
+		vec, err := emb.Embed(ctx, q)
+		if err != nil {
+			slog.Warn("failed to embed query variant", "query", q, "error", err)
+			continue
+		}
+		results, err := idx.Search(ctx, vec, searchTopK)
+		if err != nil {
+			return fmt.Errorf("searching: %w", err)
+		}
+		allGroups = append(allGroups, results)
+	}
+
+	results := mergeResults(allGroups...)
+
+	// Rerank если включён
+	if rr != nil {
+		results = rr.Rerank(question, results)
+		slog.Info("reranked results", "count", len(results))
+	} else if len(results) > 5 {
+		// Без реранкера ограничиваем до 5
+		results = results[:5]
+	}
+
 	gen := generator.NewClaudeGenerator(claudeModel)
 
 	answer, err := gen.Generate(ctx, question, results)

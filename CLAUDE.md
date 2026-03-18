@@ -15,8 +15,10 @@ task build    # то же через Taskfile
 task test
 task index    # запустить индексацию (требует Qdrant + Ollama)
 task ask -- "вопрос"
-task eval          # оценка RAG vs Baseline (10 вопросов)
-task eval-quick    # быстрая оценка (3 вопроса)
+task eval              # оценка RAG vs Baseline (10 вопросов)
+task eval-quick        # быстрая оценка (3 вопроса)
+task ask-reranked -- "вопрос"  # ask с реранкером
+task eval-reranked     # eval с 3-mode (RAG vs Reranked vs Baseline)
 ```
 
 Перед запуском убедиться, что переменные окружения из `.env` экспортированы.
@@ -34,14 +36,16 @@ task eval-quick    # быстрая оценка (3 вопроса)
 | `internal/embedder` | HTTP-клиент Ollama; `Embed(text)` и `EmbedBatch(texts, concurrency)` |
 | `internal/indexer` | gRPC-клиент Qdrant: `CreateCollection`, `Upsert`, `Search` |
 | `internal/generator` | Claude API: `Generate(question, []SearchResult) → string`, `GenerateWithoutRAG(question) → string` |
-| `internal/evaluator` | Оценка RAG vs Baseline: прогон контрольных вопросов, подсчёт покрытия фактов, отчёт |
+| `internal/evaluator` | Оценка RAG vs Baseline vs Reranked: прогон контрольных вопросов, подсчёт покрытия фактов, отчёт |
+| `internal/reranker` | Threshold-фильтр + keyword overlap scorer: `Rerank(query, results) → []SearchResult` |
+| `internal/rewriter` | Переписывание запросов через Claude API: `Rewrite(ctx, question) → []string` |
 | `internal/models` | Общие типы: `Document`, `Chunk`, `ChunkMetadata`, `SearchResult` |
 
 **Поток данных (index)**: `loader` → `chunker` × 2 → `embedder.EmbedBatch` → `indexer.Upsert` в две коллекции Qdrant.
 
-**Поток данных (ask)**: `embedder.Embed(question)` → `indexer.Search` (rag_structural, top-5) → `generator.Generate`.
+**Поток данных (ask)**: `[rewriter.Rewrite(question)]` → `embedder.Embed(queries)` → `indexer.Search` (rag_structural) → `mergeResults` → `[reranker.Rerank]` → `generator.Generate`. Rewriter и reranker опциональны, управляются через env vars.
 
-**Поток данных (eval)**: для каждого вопроса — RAG path (`Embed` → `Search` → `Generate`) и Baseline path (`GenerateWithoutRAG`) независимо → `CountFactHits` → сводка + JSON.
+**Поток данных (eval)**: для каждого вопроса — 3 пути: RAG (`Embed` → `Search` → `Generate`), Reranked (`Embed` → `Search(FetchTopK)` → `Rerank` → `Generate`), Baseline (`GenerateWithoutRAG`) → `CountFactHits` → 3-way сводка + JSON. Reranked path включается при `RERANKER_ENABLED=true`.
 
 ## Конвенции
 

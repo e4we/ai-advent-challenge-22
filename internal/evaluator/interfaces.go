@@ -23,3 +23,9 @@ type Generator interface {
 	Generate(ctx context.Context, question string, contexts []models.SearchResult) (string, error)
 	GenerateWithoutRAG(ctx context.Context, question string) (string, error)
 }
+
+// Reranker переранжирует результаты поиска.
+type Reranker interface {
+	Rerank(query string, results []models.SearchResult) []models.SearchResult
+	FetchTopK() int
+}

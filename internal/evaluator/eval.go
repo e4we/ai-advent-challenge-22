@@ -30,15 +30,17 @@ type Evaluator struct {
 	embedder  Embedder
 	searcher  Searcher
 	generator Generator
+	reranker  Reranker // nil = реранкер отключён
 	config    Config
 }
 
 // NewEvaluator создаёт Evaluator с заданными зависимостями и конфигурацией.
-func NewEvaluator(emb Embedder, search Searcher, gen Generator, cfg Config) *Evaluator {
+func NewEvaluator(emb Embedder, search Searcher, gen Generator, reranker Reranker, cfg Config) *Evaluator {
 	return &Evaluator{
 		embedder:  emb,
 		searcher:  search,
 		generator: gen,
+		reranker:  reranker,
 		config:    cfg,
 	}
 }
@@ -63,8 +65,8 @@ func (e *Evaluator) Run(ctx context.Context, questions []Question) (*EvalReport,
 	}
 
 	// Подсчёт агрегатов
-	ragWins, baselineWins, ties := 0, 0, 0
-	var ragFactsSum, baselineFactsSum float64
+	ragWins, baselineWins, rerankedWins, ties := 0, 0, 0, 0
+	var ragFactsSum, baselineFactsSum, rerankedFactsSum float64
 	evaluated := 0
 
 	for _, r := range results {
@@ -73,42 +75,53 @@ func (e *Evaluator) Run(ctx context.Context, questions []Question) (*EvalReport,
 			ragWins++
 		case "Baseline":
 			baselineWins++
+		case "Reranked":
+			rerankedWins++
 		case "Tie":
 			ties++
 		}
 		if len(r.ExpectedFacts) > 0 {
 			ragFactsSum += float64(r.RAGFactHits) / float64(len(r.ExpectedFacts)) * 100
 			baselineFactsSum += float64(r.BaselineFactHits) / float64(len(r.ExpectedFacts)) * 100
+			if e.reranker != nil {
+				rerankedFactsSum += float64(r.RAGRerankedFactHits) / float64(len(r.ExpectedFacts)) * 100
+			}
 			evaluated++
 		}
 	}
 
-	var ragAvg, baselineAvg float64
+	var ragAvg, baselineAvg, rerankedAvg float64
 	if evaluated > 0 {
 		ragAvg = ragFactsSum / float64(evaluated)
 		baselineAvg = baselineFactsSum / float64(evaluated)
+		if e.reranker != nil {
+			rerankedAvg = rerankedFactsSum / float64(evaluated)
+		}
 	}
 
 	report := &EvalReport{
-		Timestamp:           time.Now().Format(time.RFC3339),
-		Model:               e.config.Model,
-		EmbeddingModel:      e.config.EmbeddingModel,
-		Collection:          e.config.Collection,
-		TopK:                e.config.TopK,
-		TotalQuestions:      len(results),
-		RAGWins:             ragWins,
-		BaselineWins:        baselineWins,
-		Ties:                ties,
-		RAGAvgFactsPct:      ragAvg,
-		BaselineAvgFactsPct: baselineAvg,
-		Duration:            time.Since(start).Round(time.Millisecond).String(),
-		Results:             results,
+		Timestamp:              time.Now().Format(time.RFC3339),
+		Model:                  e.config.Model,
+		EmbeddingModel:         e.config.EmbeddingModel,
+		Collection:             e.config.Collection,
+		TopK:                   e.config.TopK,
+		TotalQuestions:         len(results),
+		RAGWins:                ragWins,
+		BaselineWins:           baselineWins,
+		RAGRerankedWins:        rerankedWins,
+		Ties:                   ties,
+		RAGAvgFactsPct:         ragAvg,
+		BaselineAvgFactsPct:    baselineAvg,
+		RAGRerankedAvgFactsPct: rerankedAvg,
+		RerankerEnabled:        e.reranker != nil,
+		Duration:               time.Since(start).Round(time.Millisecond).String(),
+		Results:                results,
 	}
 
 	return report, cancelErr
 }
 
-// evaluateOne оценивает один вопрос: RAG и baseline пути независимы.
+// evaluateOne оценивает один вопрос: RAG, baseline и (опционально) reranked пути.
 func (e *Evaluator) evaluateOne(ctx context.Context, q Question) QuestionResult {
 	result := QuestionResult{
 		Question:      q.Text,
@@ -119,6 +132,7 @@ func (e *Evaluator) evaluateOne(ctx context.Context, q Question) QuestionResult 
 	vector, err := e.embedder.Embed(ctx, q.Text)
 	if err != nil {
 		result.RAGError = err.Error()
+		result.RAGRerankedError = err.Error()
 	} else {
 		searchResults, err := e.searcher.Search(ctx, vector, e.config.TopK)
 		if err != nil {
@@ -140,6 +154,32 @@ func (e *Evaluator) evaluateOne(ctx context.Context, q Question) QuestionResult 
 				result.RAGAnswer = ragAnswer
 			}
 		}
+
+		// Reranked path: search(FetchTopK) → rerank → generate
+		if e.reranker != nil {
+			fetchTopK := e.reranker.FetchTopK()
+			rerankedResults, err := e.searcher.Search(ctx, vector, fetchTopK)
+			if err != nil {
+				result.RAGRerankedError = err.Error()
+			} else {
+				reranked := e.reranker.Rerank(q.Text, rerankedResults)
+
+				for _, sr := range reranked {
+					result.RAGRerankedSources = append(result.RAGRerankedSources, SourceInfo{
+						File:    sr.Chunk.Metadata.Source,
+						Section: sr.Chunk.Metadata.Section,
+						Score:   sr.Score,
+					})
+				}
+
+				rerankedAnswer, err := e.generator.Generate(ctx, q.Text, reranked)
+				if err != nil {
+					result.RAGRerankedError = err.Error()
+				} else {
+					result.RAGRerankedAnswer = rerankedAnswer
+				}
+			}
+		}
 	}
 
 	// Baseline path (независимо от RAG)
@@ -153,18 +193,48 @@ func (e *Evaluator) evaluateOne(ctx context.Context, q Question) QuestionResult 
 	// Scoring
 	result.RAGFactHits, result.RAGMatchedFacts = CountFactHits(q.ExpectedFacts, result.RAGAnswer)
 	result.BaselineFactHits, result.BaselineMatchedFacts = CountFactHits(q.ExpectedFacts, result.BaselineAnswer)
-
-	// Winner
-	switch {
-	case result.RAGAnswer == "" && result.BaselineAnswer == "":
-		result.Winner = "N/A"
-	case result.RAGFactHits > result.BaselineFactHits:
-		result.Winner = "RAG"
-	case result.BaselineFactHits > result.RAGFactHits:
-		result.Winner = "Baseline"
-	default:
-		result.Winner = "Tie"
+	if e.reranker != nil {
+		result.RAGRerankedFactHits, result.RAGRerankedMatchedFacts = CountFactHits(q.ExpectedFacts, result.RAGRerankedAnswer)
 	}
 
+	// Winner: Reranked > RAG > Baseline при равенстве
+	result.Winner = determineWinner(
+		result.RAGAnswer, result.BaselineAnswer, result.RAGRerankedAnswer,
+		result.RAGFactHits, result.BaselineFactHits, result.RAGRerankedFactHits,
+		e.reranker != nil,
+	)
+
 	return result
+}
+
+// determineWinner определяет победителя по количеству фактов.
+// При равенстве приоритет: Reranked > RAG > Baseline.
+func determineWinner(ragAnswer, baseAnswer, rerankedAnswer string, ragHits, baseHits, rerankedHits int, rerankerEnabled bool) string {
+	allEmpty := ragAnswer == "" && baseAnswer == ""
+	if rerankerEnabled {
+		allEmpty = allEmpty && rerankedAnswer == ""
+	}
+	if allEmpty {
+		return "N/A"
+	}
+
+	best := ragHits
+	winner := "RAG"
+
+	if rerankerEnabled && rerankedHits >= best {
+		best = rerankedHits
+		winner = "Reranked"
+	}
+
+	if baseHits > best {
+		return "Baseline"
+	}
+
+	if baseHits == best && best == ragHits {
+		if !rerankerEnabled || rerankedHits == best {
+			return "Tie"
+		}
+	}
+
+	return winner
 }

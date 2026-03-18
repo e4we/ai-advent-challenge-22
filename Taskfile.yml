@@ -38,6 +38,20 @@ tasks:
     cmds:
       - '{{.BIN}} eval-quick'
 
+  ask-reranked:
+    deps: [build]
+    env:
+      RERANKER_ENABLED: "true"
+    cmds:
+      - '{{.BIN}} ask "{{.CLI_ARGS}}"'
+
+  eval-reranked:
+    deps: [build]
+    env:
+      RERANKER_ENABLED: "true"
+    cmds:
+      - '{{.BIN}} eval'
+
   test:
     cmds:
       - go test ./...
